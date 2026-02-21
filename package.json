@@ -1,0 +1,14 @@
+{
+  "name": "mathmod",
+  "version": "1.0.0",
+  "description": "Математическое моделирование",
+  "main": "index.js",
+  "repository": "git@github.com:nvgaforov/2026-1--study--mathmod.git",
+  "author": "nvgaforov <1032234484@rudn.ru>",
+  "license": "CC-BY-4.0",
+    "config": {
+	"commitizen": {
+	    "path": "cz-customizable"
+	}
+    }
+}

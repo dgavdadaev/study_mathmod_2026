@@ -1,0 +1,351 @@
+using DrWatson
+@quickactivate "project"
+
+using DifferentialEquations
+using DataFrames
+using Plots
+using JLD2
+using BenchmarkTools
+
+script_name = splitext(basename(PROGRAM_FILE))[1]
+mkpath(plotsdir(script_name))
+mkpath(datadir(script_name))
+
+function cutter_ode!(dr, r, p, θ)
+    dr[1] = r[1] / sqrt(p.n^2 - 1)
+end
+
+function boat_polar(t, p)
+    k = tan(p.fi + pi)
+    x = t
+    y = k * t
+    r = hypot(x, y)
+    θ = atan(y, x)
+    return r, θ
+end
+
+base_params = Dict(
+    :n => 5,
+    :s => 20,
+    :fi => 3/4*pi,
+
+    :case => :plus,                 # :plus или :minus
+    :θspan => (0.0, 2*pi),           # интервал по θ
+    :nθ => 10_000,                   # число точек для сохранения решения катера
+
+    :tspan_boat => (1e-9, 8.0),      # интервал по t для лодки
+    :nt_boat => 1_000,               # число точек для лодки
+
+    :solver => Tsit5(),
+    :experiment_name => "base_experiment"
+)
+
+println("Базовые параметры эксперимента:")
+for (key, value) in base_params
+    println(" $key = $value")
+end
+
+function run_single_experiment(params::Dict)
+    @unpack n, s, fi, case, θspan, nθ, tspan_boat, nt_boat, solver = params
+
+    p = (n=n, s=s, fi=fi)
+
+    r0 = case == :plus ? s/(n+1) : s/(n-1)
+
+    θgrid = collect(LinRange(θspan[1], θspan[2], nθ))
+    prob = ODEProblem(cutter_ode!, [r0], θspan, p)
+    sol = solve(prob, solver; saveat=θgrid)
+
+    r_cutter = first.(sol.u)
+
+    tgrid = collect(LinRange(tspan_boat[1], tspan_boat[2], nt_boat))
+    r_boat = Vector{Float64}(undef, length(tgrid))
+    θ_boat = Vector{Float64}(undef, length(tgrid))
+    for (i, tt) in pairs(tgrid)
+        ri, θi = boat_polar(tt, p)
+        r_boat[i] = ri
+        θ_boat[i] = θi
+    end
+
+    r_cutter_final = r_cutter[end]
+
+    r_boat_max = maximum(r_boat)
+
+    scale_ratio = r_cutter_final / r_boat_max
+
+    return Dict(
+        "solution" => sol,
+        "θ_points" => sol.t,
+        "r_cutter" => r_cutter,
+
+        "t_points_boat" => tgrid,
+        "θ_boat" => θ_boat,
+        "r_boat" => r_boat,
+
+        "r0" => r0,
+        "r_cutter_final" => r_cutter_final,
+        "r_boat_max" => r_boat_max,
+        "scale_ratio" => scale_ratio,
+
+        "parameters" => params
+    )
+end
+
+data_base, path_base = produce_or_load(
+    datadir(script_name, "single"),
+    base_params,
+    run_single_experiment;
+    prefix = "polar",
+    tag = false,
+    verbose = true
+)
+
+println("\nРезультаты базового эксперимента:")
+println(" r0: ", data_base["r0"])
+println(" r_cutter_final: ", data_base["r_cutter_final"])
+println(" r_boat_max: ", data_base["r_boat_max"])
+println(" scale_ratio: ", round(data_base["scale_ratio"]; digits=4))
+println(" Файл результатов: ", path_base)
+
+p1 = plot(
+    data_base["θ_points"], data_base["r_cutter"],
+    proj=:polar,
+    label="катер",
+    xlabel="θ",
+    ylabel="r",
+    title="Базовый эксперимент (case=$(base_params[:case]))",
+    lw=2,
+    legend=:topleft,
+    grid=true
+)
+plot!(
+    p1,
+    data_base["θ_boat"], data_base["r_boat"],
+    proj=:polar,
+    label="лодка",
+    lw=2
+)
+
+savefig(p1, plotsdir(script_name, "single_experiment.png"))
+
+base_params2 = copy(base_params)
+base_params2[:case] = :minus
+base_params2[:tspan_boat] = (1e-9, 15.0)
+base_params2[:experiment_name] = "base_experiment_minus"
+
+data_base2, path_base2 = produce_or_load(
+    datadir(script_name, "single"),
+    base_params2,
+    run_single_experiment;
+    prefix = "polar",
+    tag = false,
+    verbose = true
+)
+
+p1b = plot(
+    data_base2["θ_points"], data_base2["r_cutter"],
+    proj=:polar,
+    label="катер",
+    xlabel="θ",
+    ylabel="r",
+    title="Базовый эксперимент (case=$(base_params2[:case]))",
+    lw=2,
+    legend=:topleft,
+    grid=true
+)
+plot!(
+    p1b,
+    data_base2["θ_boat"], data_base2["r_boat"],
+    proj=:polar,
+    label="лодка",
+    lw=2
+)
+savefig(p1b, plotsdir(script_name, "single_experiment_minus.png"))
+
+param_grid = Dict(
+    :n => [3, 4, 5, 6, 8, 10],       # сканируем n
+    :s => [20],                      # фиксируем
+    :fi => [3/4*pi],                 # фиксируем
+
+    :case => [:plus, :minus],        # сканируем оба кейса
+    :θspan => [(0.0, 2*pi)],
+    :nθ => [10_000],
+
+    :tspan_boat => [(1e-9, 8.0)],    # можно тоже сканировать, но обычно фиксируют
+    :nt_boat => [1_000],
+
+    :solver => [Tsit5()],
+    :experiment_name => ["parametric_scan"]
+)
+
+all_params = dict_list(param_grid)
+
+println("\n" * "="^60)
+println("ПАРАМЕТРИЧЕСКОЕ СКАНИРОВАНИЕ")
+println("Всего комбинаций параметров: ", length(all_params))
+println("Исследуемые n: ", param_grid[:n])
+println("Исследуемые case: ", param_grid[:case])
+println("="^60)
+
+all_results = []
+all_dfs = []
+
+for (i, params) in enumerate(all_params)
+    println("Прогресс: $i/$(length(all_params)) | n=$(params[:n]) | case=$(params[:case])")
+
+    data, path = produce_or_load(
+        datadir(script_name, "parametric_scan"),
+        params,
+        run_single_experiment;
+        prefix = "scan",
+        tag = false,
+        verbose = false
+    )
+
+    result_summary = merge(
+        params,
+        Dict(
+            :r0 => data["r0"],
+            :r_cutter_final => data["r_cutter_final"],
+            :r_boat_max => data["r_boat_max"],
+            :scale_ratio => data["scale_ratio"],
+            :filepath => path
+        )
+    )
+    push!(all_results, result_summary)
+
+    df = DataFrame(
+        θ = data["θ_points"],
+        r = data["r_cutter"],
+        n = fill(params[:n], length(data["θ_points"])),
+        case = fill(string(params[:case]), length(data["θ_points"]))
+    )
+    push!(all_dfs, df)
+end
+
+results_df = DataFrame(all_results)
+println("\nСводная таблица результатов (первые строки):")
+println(first(results_df, 10))
+
+p2 = plot(size=(900, 520), dpi=150)
+for params in all_params
+    data, _ = produce_or_load(
+        datadir(script_name, "parametric_scan"),
+        params,
+        run_single_experiment;
+        prefix = "scan",
+        tag = false,
+        verbose = false
+    )
+
+    plot!(
+        p2,
+        data["θ_points"], data["r_cutter"],
+        label="n=$(params[:n]), case=$(params[:case])",
+        lw=2,
+        alpha=0.8
+    )
+end
+plot!(
+    p2,
+    xlabel="θ",
+    ylabel="r(θ)",
+    title="Сканирование: траектории катера (ODE) при разных n и case",
+    legend=:outerright,
+    grid=true
+)
+savefig(p2, plotsdir(script_name, "parametric_scan_cutter_comparison.png"))
+
+p3 = plot(size=(900, 520), dpi=150)
+for cs in unique(results_df.case)
+    sub = results_df[results_df.case .== cs, :]
+    plot!(
+        p3,
+        sub.n, sub.scale_ratio,
+        seriestype=:scatter,
+        label="case=$cs"
+    )
+end
+plot!(
+    p3,
+    xlabel="n",
+    ylabel="scale_ratio",
+    title="Зависимость scale_ratio от n (для разных case)",
+    legend=:topleft,
+    grid=true
+)
+savefig(p3, plotsdir(script_name, "scale_ratio_vs_n.png"))
+
+println("\n" * "="^60)
+println("Бенчмаркинг для разных n (оба case)")
+println("="^60)
+
+benchmark_results = []
+
+for n_value in param_grid[:n], case_value in param_grid[:case]
+    bench_params = Dict(
+        :n => n_value,
+        :s => base_params[:s],
+        :fi => base_params[:fi],
+        :case => case_value,
+        :θspan => base_params[:θspan],
+        :nθ => base_params[:nθ],
+        :tspan_boat => base_params[:tspan_boat],
+        :nt_boat => base_params[:nt_boat],
+        :solver => base_params[:solver]
+    )
+
+    function benchmark_run()
+
+        p = (n=bench_params[:n], s=bench_params[:s], fi=bench_params[:fi])
+        r0 = bench_params[:case] == :plus ? bench_params[:s]/(bench_params[:n]+1) : bench_params[:s]/(bench_params[:n]-1)
+        prob = ODEProblem(cutter_ode!, [r0], bench_params[:θspan], p)
+        return solve(prob, bench_params[:solver]; saveat=LinRange(bench_params[:θspan][1], bench_params[:θspan][2], bench_params[:nθ]))
+    end
+
+    println("\nБенчмарк для n = $n_value, case = $case_value:")
+    b = @benchmark $benchmark_run() samples=80 evals=1
+    tsec = median(b).time / 1e9
+    println(" Медианное время: ", round(tsec; digits=4), " сек")
+
+    push!(benchmark_results, (n=n_value, case=string(case_value), time=tsec))
+end
+
+bench_df = DataFrame(benchmark_results)
+
+p4 = plot(size=(900, 520), dpi=150)
+for cs in unique(bench_df.case)
+    sub = bench_df[bench_df.case .== cs, :]
+    plot!(
+        p4,
+        sub.n, sub.time,
+        seriestype=:scatter,
+        label="case=$cs"
+    )
+end
+plot!(
+    p4,
+    xlabel="n",
+    ylabel="Время вычисления, сек",
+    title="Зависимость времени решения ODE от n (для разных case)",
+    legend=:topleft,
+    grid=true
+)
+savefig(p4, plotsdir(script_name, "computation_time_vs_n.png"))
+
+@save datadir(script_name, "all_results.jld2") base_params base_params2 param_grid all_params results_df bench_df
+@save datadir(script_name, "all_plots.jld2") p1 p1b p2 p3 p4
+
+println("\n" * "="^60)
+println("ЛАБОРАТОРНАЯ РАБОТА ЗАВЕРШЕНА")
+println("="^60)
+println("\nРезультаты сохранены в:")
+println(" • data/$(script_name)/single/ - базовые эксперименты")
+println(" • data/$(script_name)/parametric_scan/ - параметрическое сканирование")
+println(" • data/$(script_name)/all_results.jld2 - сводные данные")
+println(" • plots/$(script_name)/ - все графики")
+println(" • data/$(script_name)/all_plots.jld2 - объекты графиков")
+println("\nДля анализа результатов используйте:")
+println(" using JLD2, DataFrames")
+println(" @load \"data/$(script_name)/all_results.jld2\"")
+println(" println(results_df)")
