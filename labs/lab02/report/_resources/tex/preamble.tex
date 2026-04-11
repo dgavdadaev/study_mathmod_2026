@@ -1,0 +1,48 @@
+\usepackage{indentfirst}
+\usepackage{float}
+\floatplacement{figure}{H}
+
+\usepackage{amsmath, amssymb}
+\usepackage{mathtools}
+\usepackage{bm}
+
+% *** ОПРЕДЕЛЯЕМ МАТЕМАТИЧЕСКИЕ ШРИФТЫ ДО PLEX ***
+\DeclareMathAlphabet{\mathrm}{OT1}{lmr}{m}{n}
+\DeclareMathAlphabet{\mathbf}{OT1}{lmr}{bx}{n}
+\DeclareMathAlphabet{\mathit}{OT1}{lmr}{m}{it}
+\DeclareMathAlphabet{\mathcal}{OT1}{lmr}{m}{it}
+\SetMathAlphabet{\mathrm}{bold}{OT1}{lmr}{bx}{n}
+\SetMathAlphabet{\mathbf}{bold}{OT1}{lmr}{bx}{n}
+
+\IfFileExists{plex-otf.sty}{
+  % Теперь загружаем Plex - он увидит, что математика уже определена
+  \usepackage[
+    RM={Scale=0.94},SS={Scale=0.94},SScon={Scale=0.94},TT={Scale=MatchLowercase,FakeStretch=0.9},
+    DefaultFeatures={Ligatures=Common}
+  ]{plex-otf}
+  
+  % Дополнительная поддержка Unicode символов
+  \usepackage{newunicodechar}
+  \newunicodechar{𝑑}{d}
+  \newunicodechar{𝑢}{u}
+  \newunicodechar{𝛼}{\alpha}
+  \newunicodechar{𝑡}{t}
+  
+  % Явная загрузка JuliaMono
+  \setmonofont{JuliaMono}[
+    Path = /home/glebq/.local/share/fonts/,
+    Extension = .ttf,
+    UprightFont = *-Regular,
+    BoldFont = *-Bold,
+    ItalicFont = *-RegularItalic,
+    BoldItalicFont = *-BoldItalic
+  ]
+}{
+  %% TinyTeX
+  \usepackage{libertine}
+  \usepackage{newunicodechar}
+  \newunicodechar{𝑑}{d}
+  \newunicodechar{𝑢}{u}
+  \newunicodechar{𝛼}{\alpha}
+  \newunicodechar{𝑡}{t}
+}

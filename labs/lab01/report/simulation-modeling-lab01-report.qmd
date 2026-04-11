@@ -1,0 +1,347 @@
+---
+## Author
+author:
+  name: Глеб Беспутин
+  email: glebb2005@mail.ru
+title: "Лабораторная работа №1: Подготовка стенда и модель экспоненциального роста"
+subtitle: "Имитационное моделирование"
+license: "CC BY"
+---
+
+# Цель работы
+
+Освоить практические навыки настройки рабочего окружения для имитационного моделирования: работа с Git, GPG-подпись коммитов, организация проекта с помощью DrWatson, реализация модели экспоненциального роста в литературном стиле.
+
+# Задание
+
+1. Создать рабочий каталог для курса
+2. Настроить Git, SSH и GPG для подписи коммитов
+3. Инициализировать Git Flow и создать первый релиз v1.0.0
+4. Создать проект DrWatson и установить необходимые пакеты
+5. Реализовать модель экспоненциального роста
+6. Преобразовать код в литературный стиль
+7. Выполнить параметрическое исследование модели
+8. Сгенерировать отчёт в формате Quarto
+
+# Теоретическое введение
+
+Модель экспоненциального роста описывается дифференциальным уравнением:
+
+$$ \frac{du}{dt} = \alpha u $$
+
+где $u$ — текущее значение величины, $t$ — время, $\alpha$ — константа скорости роста.
+
+Решение уравнения: $u(t) = u_0 e^{\alpha t}$, где $u_0$ — начальное значение.
+
+Время удвоения: T(1/2) = ln(2)/α
+
+# Выполнение лабораторной работы
+
+## 1. Создание рабочего каталога курса
+
+```bash
+mkdir -p ~/work/study/2026-1/
+cd ~/work/study/2026-1/
+git clone ssh://git@gitverse.ru:2222/gleb/2026-1--study--simulation-modeling.git
+cd 2026-1--study--simulation-modeling
+echo simulation-modeling > COURSE
+make prepare
+git add .
+git commit -am 'feat(main): make course structure'
+git push
+```
+
+
+## 2. Настройка Git и GPG
+
+```bash
+git config --global user.name "Gleb Besputin"
+git config --global user.email "glebb2005@mail.ru"
+git config --global core.quotepath false
+git config --global init.defaultBranch master
+git config --global core.autocrlf input
+git config --global core.safecrlf warn
+
+gpg --full-generate-key
+# Параметры: RSA and RSA, 4096 бит, срок действия 0
+# Имя: Gleb Besputin
+# Email: glebb2005@mail.ru
+
+gpg --list-secret-keys --keyid-format LONG
+# sec rsa3072/10547AD5D4AA8DDC 2026-02-21 [SC]
+# EA61F28EB9A2C32C67D34AE010547AD5D4AA8DDC
+# uid [ultimate] Gleb Besputin <glebb2005@mail.ru>
+
+git config --global user.signingkey 10547AD5D4AA8DDC
+git config --global commit.gpgsign true
+
+gpg --armor --export glebb2005@mail.ru
+# Добавлен на https://gitverse.ru/settings/keys
+
+echo "test" > test-gpg.txt
+git add test-gpg.txt
+git commit -S -m "test: проверка GPG подписи"
+git log --show-signature -1
+```
+
+
+## 3. Инициализация Git Flow и создание релиза
+
+```bash
+git flow init -d
+git flow release start 1.0.0
+sudo npm install -g standard-version
+standard-changelog --first-release
+git add CHANGELOG.md
+git commit -m "chore: add changelog for release 1.0.0"
+git flow release finish 1.0.0
+git push --all
+git push --tags
+```
+
+
+## 4. Создание проекта DrWatson
+
+```bash
+cd labs/lab01
+julia
+```
+
+```julia
+using Pkg
+Pkg.add("DrWatson")
+using DrWatson
+initialize_project("project"; authors="Gleb Besputin", git=false)
+cd("project")
+exit()
+```
+
+```bash
+cat > add_packages.jl << 'EOF'
+#!/usr/bin/env julia
+using Pkg
+Pkg.activate("project")
+packages = [
+    "DrWatson", "DifferentialEquations", "Plots", 
+    "DataFrames", "CSV", "JLD2", "Literate", 
+    "IJulia", "BenchmarkTools", "Quarto"
+]
+println("Установка базовых пакетов...")
+Pkg.add(packages)
+println("\nВсе пакеты установлены!")
+EOF
+
+julia add_packages.jl
+
+mkdir -p project/scripts
+cat > project/scripts/test_setup.jl << 'EOF'
+#!/usr/bin/env julia
+using DrWatson
+@quickactivate "project"
+println("✅ Проект активирован: ", projectdir())
+println("\nСтруктура проекта:")
+println("  Корень: ", projectdir())
+println("  Данные: ", datadir())
+println("  Скрипты: ", srcdir())
+println("  Графики: ", plotsdir())
+EOF
+
+julia --project=. project/scripts/test_setup.jl
+```
+
+
+## 5. Реализация модели экспоненциального роста
+
+```bash
+cat > project/scripts/01_exponential_growth.jl << 'EOF'
+using DrWatson
+@quickactivate "project"
+using DifferentialEquations, Plots, DataFrames
+
+function exponential_growth!(du, u, p, t)
+    α = p
+    du[1] = α * u[1]
+end
+
+u0 = [1.0]
+α = 0.3
+tspan = (0.0, 10.0)
+
+prob = ODEProblem(exponential_growth!, u0, tspan, α)
+sol = solve(prob, Tsit5(), saveat=0.1)
+
+plot(sol, label="u(t)", xlabel="Время t", ylabel="Популяция u", 
+     title="Экспоненциальный рост (α = $α)", lw=2)
+savefig(plotsdir("exponential_growth.png"))
+
+df = DataFrame(t=sol.t, u=first.(sol.u))
+println("Первые 5 строк результатов:")
+println(first(df, 5))
+
+doubling_time = log(2) / α
+println("\nВремя удвоения: ", round(doubling_time, digits=2))
+EOF
+
+julia --project=. project/scripts/01_exponential_growth.jl
+```
+
+
+## 6. Литературный стиль
+
+```bash
+cat > project/scripts/01_exponential_growth_literate.jl << 'EOF'
+# # Экспоненциальный рост
+# **Цель:** Исследовать решение уравнения du/dt = αu.
+#
+# ## Инициализация проекта
+using DrWatson
+@quickactivate "project"
+using DifferentialEquations, Plots, DataFrames
+
+# ## Определение модели
+# Уравнение: $\frac{du}{dt} = \alpha u$, $u(0) = u_0$
+function exponential_growth!(du, u, p, t)
+    α = p
+    du[1] = α * u[1]
+end
+
+# ## Параметры модели
+u0 = [1.0]
+α = 0.3
+tspan = (0.0, 10.0)
+
+# ## Решение ОДУ
+prob = ODEProblem(exponential_growth!, u0, tspan, α)
+sol = solve(prob, Tsit5(), saveat=0.1)
+
+# ## Визуализация
+plot(sol, label="u(t)", xlabel="Время t", ylabel="Популяция u", 
+     title="Экспоненциальный рост (α = $α)", lw=2)
+savefig(plotsdir("exponential_growth_literate.png"))
+
+# ## Анализ результатов
+df = DataFrame(t=sol.t, u=first.(sol.u))
+println("Первые 5 строк результатов:")
+println(first(df, 5))
+
+doubling_time = log(2) / α
+println("\nВремя удвоения: ", round(doubling_time, digits=2))
+EOF
+
+cat > project/scripts/tangle.jl << 'EOF'
+#!/usr/bin/env julia
+using DrWatson
+@quickactivate "project"
+using Literate
+
+script_path = ARGS[1]
+script_name = splitext(basename(script_path))[1]
+
+println("Генерация из: $script_path")
+
+Literate.script(script_path, scriptsdir(script_name); credit=false)
+println("  Чистый код: $(scriptsdir(script_name))/$(script_name).jl")
+
+Literate.markdown(script_path, projectdir("markdown", script_name); 
+                  flavor=Literate.QuartoFlavor(), credit=false)
+println("  Quarto: $(projectdir("markdown", script_name))/$(script_name).qmd")
+
+Literate.notebook(script_path, projectdir("notebooks", script_name); 
+                  credit=false)
+println("  Notebook: $(projectdir("notebooks", script_name))/$(script_name).ipynb")
+EOF
+
+julia --project=. project/scripts/tangle.jl project/scripts/01_exponential_growth_literate.jl
+```
+
+
+## 7. Параметрическое исследование
+
+```bash
+cat > project/scripts/02_exponential_growth_parametric.jl << 'EOF'
+# # Параметрическое исследование экспоненциального роста
+using DrWatson
+@quickactivate "project"
+using DifferentialEquations, Plots, DataFrames
+
+function exponential_growth!(du, u, p, t)
+    α = p
+    du[1] = α * u[1]
+end
+
+function run_experiment(α, u0=1.0, tmax=10.0)
+    prob = ODEProblem(exponential_growth!, [u0], (0.0, tmax), α)
+    sol = solve(prob, Tsit5(), saveat=0.1)
+    return sol
+end
+
+α_values = [0.1, 0.3, 0.5, 0.8, 1.0]
+results = []
+
+p = plot(size=(800, 500), xlabel="Время t", ylabel="Популяция u", 
+         title="Экспоненциальный рост при разных α")
+
+for α in α_values
+    sol = run_experiment(α)
+    plot!(p, sol.t, first.(sol.u), label="α = $α", lw=2)
+    push!(results, (α=α, final=last(sol.u)[1], doubling_time=log(2)/α))
+end
+
+savefig(p, plotsdir("parametric_comparison.png"))
+display(p)
+
+println("\nРезультаты параметрического исследования:")
+results_df = DataFrame(results)
+println(results_df)
+EOF
+
+julia --project=. project/scripts/02_exponential_growth_parametric.jl
+```
+
+## 8. Интеграция в отчёт
+
+```bash
+mkdir -p report
+cat > report/_quarto.yml << 'EOF'
+project:
+  title: "Лабораторная работа №1"
+  output-dir: _output
+engine: julia
+julia:
+  exeflags: ["--project=../project"]
+format:
+  html:
+    toc: true
+    toc-title: Содержание
+  pdf:
+    toc: true
+    toc-title: Содержание
+    documentclass: scrreprt
+EOF
+
+cp lab01-report.qmd report/
+cd report
+quarto render lab01-report.qmd
+```
+
+# Выводы
+
+В ходе лабораторной работы было выполнено:
+
+1. Создано рабочее пространство для курса имитационного моделирования
+2. Настроены Git, GPG для подписи коммитов (получена зелёная метка Verified)
+3. Инициализирован Git Flow и создан первый релиз v1.0.0
+4. Создан проект DrWatson с установленными необходимыми пакетами
+5. Реализована модель экспоненциального роста на Julia
+6. Код преобразован в литературный стиль с использованием Literate.jl
+7. Выполнено параметрическое исследование влияния скорости роста α
+8. Сгенерированы Jupyter notebook и Quarto-документация, интегрированные в отчёт
+
+Полученные навыки являются основой для дальнейшего изучения методов имитационного моделирования.
+
+# Список литературы{.unnumbered}
+
+{{< include ../project/markdown/01_exponential_growth/01_exponential_growth.qmd >}}
+
+::: {#refs}
+:::

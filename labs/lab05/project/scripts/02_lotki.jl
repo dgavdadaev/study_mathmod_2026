@@ -1,0 +1,559 @@
+# # Параметрическое исследование модели хищник-жертва
+#
+# ## Активация проекта и загрузка пакетов
+using DrWatson
+@quickactivate "project"
+
+using DifferentialEquations
+using DataFrames
+using Plots
+using JLD2
+using BenchmarkTools
+using CSV
+
+# ## Установка каталогов
+script_name = isempty(PROGRAM_FILE) ? "interactive" : splitext(basename(PROGRAM_FILE))[1]
+mkpath(plotsdir(script_name))
+mkpath(datadir(script_name))
+
+# ## Определение моделей
+#
+# Первая система (базовая модель Лотки–Вольтерры):
+# dx/dt = -a*x + b*x*y
+# dy/dt =  c*y - d*x*y
+function syst_base!(dy, y, p, t)
+    dy[1] = -p.a * y[1] + p.b * y[1] * y[2]
+    dy[2] =  p.c * y[2] - p.d * y[1] * y[2]
+end
+
+# Вторая система (усложнённая модель с внутривидовым ограничением жертв):
+# dx/dt = -a*x + b*x*y - k*x^2
+# dy/dt =  c*y - d*x*y
+function syst_extended!(dy, y, p, t)
+    dy[1] = -p.a * y[1] + p.b * y[1] * y[2] - p.k * y[1]^2
+    dy[2] =  p.c * y[2] - p.d * y[1] * y[2]
+end
+
+# ## Базовые параметры в Dict
+# model_type управляет выбором системы:
+# :base     -> классическая модель
+# :extended -> модель с дополнительным нелинейным членом -k*x^2
+base_params = Dict(
+    :x0 => 8.0,
+    :y0 => 11.0,
+
+    :tspan => (0.0, 150.0),
+    :nt => 1000,
+
+    :model_type => :base,      # :base или :extended
+
+    # Параметры базовой модели
+    :a => 0.25,
+    :b => 0.025,
+    :c => 0.45,
+    :d => 0.045,
+
+    # Дополнительный параметр расширенной модели
+    :k => 0.002,
+
+    :solver => Tsit5(),
+    :experiment_name => "base_experiment"
+)
+
+println("Базовые параметры эксперимента:")
+for (key, value) in base_params
+    println(" $key = $value")
+end
+
+# ## Функция-обертка для запуска одного эксперимента
+function run_single_experiment(params::Dict)
+    x0 = params[:x0]
+    y0 = params[:y0]
+    tspan = params[:tspan]
+    nt = params[:nt]
+    model_type = params[:model_type]
+    a = params[:a]
+    b = params[:b]
+    c = params[:c]
+    d = params[:d]
+    k = params[:k]
+    solver = params[:solver]
+
+    u0 = [x0, y0]
+    tgrid = collect(LinRange(tspan[1], tspan[2], nt))
+
+    if model_type == :base
+        p = (a = a, b = b, c = c, d = d)
+        prob = ODEProblem(syst_base!, u0, tspan, p)
+    else
+        p = (a = a, b = b, c = c, d = d, k = k)
+        prob = ODEProblem(syst_extended!, u0, tspan, p)
+    end
+
+    sol = solve(prob, solver; saveat = tgrid)
+
+    x_vals = first.(sol.u)
+    y_vals = last.(sol.u)
+
+    # --- Мини-анализ ---
+    x_final = x_vals[end]
+    y_final = y_vals[end]
+
+    x_max = maximum(x_vals)
+    y_max = maximum(y_vals)
+
+    x_min = minimum(x_vals)
+    y_min = minimum(y_vals)
+
+    x_mean = mean(x_vals)
+    y_mean = mean(y_vals)
+
+    norm_final = sqrt(x_final^2 + y_final^2)
+
+    return Dict(
+        "solution" => sol,
+        "t_points" => sol.t,
+        "x_values" => x_vals,
+        "y_values" => y_vals,
+
+        "x_final" => x_final,
+        "y_final" => y_final,
+        "x_max" => x_max,
+        "y_max" => y_max,
+        "x_min" => x_min,
+        "y_min" => y_min,
+        "x_mean" => x_mean,
+        "y_mean" => y_mean,
+        "norm_final" => norm_final,
+
+        "parameters" => params
+    )
+end
+
+# ## Запуск базового эксперимента
+data_base, path_base = produce_or_load(
+    datadir(script_name, "single"),
+    base_params,
+    run_single_experiment;
+    prefix = "ode",
+    tag = false,
+    verbose = true
+)
+
+println("\nРезультаты базового эксперимента:")
+println(" x_final: ", data_base["x_final"])
+println(" y_final: ", data_base["y_final"])
+println(" x_max: ", data_base["x_max"])
+println(" y_max: ", data_base["y_max"])
+println(" x_min: ", data_base["x_min"])
+println(" y_min: ", data_base["y_min"])
+println(" x_mean: ", round(data_base["x_mean"]; digits = 4))
+println(" y_mean: ", round(data_base["y_mean"]; digits = 4))
+println(" norm_final: ", round(data_base["norm_final"]; digits = 4))
+println(" Файл результатов: ", path_base)
+
+# ## Визуализация базового эксперимента
+p1 = plot(
+    data_base["t_points"], data_base["x_values"],
+    label = "x(t) — жертвы",
+    xlabel = "t",
+    ylabel = "Численность",
+    title = "Базовый эксперимент (model_type=$(base_params[:model_type]))",
+    lw = 2,
+    legend = :topright,
+    grid = true
+)
+plot!(
+    p1,
+    data_base["t_points"], data_base["y_values"],
+    label = "y(t) — хищники",
+    lw = 2
+)
+
+savefig(p1, plotsdir(script_name, "single_experiment_base.png"))
+
+# ## Фазовый портрет базового эксперимента
+p2 = plot(
+    data_base["x_values"], data_base["y_values"],
+    xlabel = "x",
+    ylabel = "y",
+    label = "Фазовая траектория",
+    title = "Фазовый портрет (model_type=$(base_params[:model_type]))",
+    lw = 2,
+    legend = :topright,
+    grid = true
+)
+
+savefig(p2, plotsdir(script_name, "single_experiment_base_phase.png"))
+
+# ## Второй базовый эксперимент (расширенная система)
+base_params2 = copy(base_params)
+base_params2[:model_type] = :extended
+base_params2[:experiment_name] = "base_experiment_extended"
+
+data_base2, path_base2 = produce_or_load(
+    datadir(script_name, "single"),
+    base_params2,
+    run_single_experiment;
+    prefix = "ode",
+    tag = false,
+    verbose = true
+)
+
+println("\nРезультаты второго базового эксперимента:")
+println(" x_final: ", data_base2["x_final"])
+println(" y_final: ", data_base2["y_final"])
+println(" x_max: ", data_base2["x_max"])
+println(" y_max: ", data_base2["y_max"])
+println(" x_min: ", data_base2["x_min"])
+println(" y_min: ", data_base2["y_min"])
+println(" x_mean: ", round(data_base2["x_mean"]; digits = 4))
+println(" y_mean: ", round(data_base2["y_mean"]; digits = 4))
+println(" norm_final: ", round(data_base2["norm_final"]; digits = 4))
+println(" Файл результатов: ", path_base2)
+
+p3 = plot(
+    data_base2["t_points"], data_base2["x_values"],
+    label = "x(t) — жертвы",
+    xlabel = "t",
+    ylabel = "Численность",
+    title = "Базовый эксперимент (model_type=$(base_params2[:model_type]))",
+    lw = 2,
+    legend = :topright,
+    grid = true
+)
+plot!(
+    p3,
+    data_base2["t_points"], data_base2["y_values"],
+    label = "y(t) — хищники",
+    lw = 2
+)
+
+savefig(p3, plotsdir(script_name, "single_experiment_extended.png"))
+
+p4 = plot(
+    data_base2["x_values"], data_base2["y_values"],
+    xlabel = "x",
+    ylabel = "y",
+    label = "Фазовая траектория",
+    title = "Фазовый портрет (model_type=$(base_params2[:model_type]))",
+    lw = 2,
+    legend = :topright,
+    grid = true
+)
+
+savefig(p4, plotsdir(script_name, "single_experiment_extended_phase.png"))
+
+# ## Параметрическое сканирование
+# Сканируем:
+# - для базовой модели параметр a
+# - для расширенной модели параметр k
+param_grid = Dict(
+    :x0 => [8.0],
+    :y0 => [11.0],
+
+    :tspan => [(0.0, 150.0)],
+    :nt => [1000],
+
+    :model_type => [:base, :extended],
+
+    :a => [0.15, 0.25, 0.35, 0.50],
+    :b => [0.025],
+    :c => [0.45],
+    :d => [0.045],
+
+    :k => [0.0, 0.001, 0.002, 0.005],
+
+    :solver => [Tsit5()],
+    :experiment_name => ["parametric_scan"]
+)
+
+all_params = dict_list(param_grid)
+
+println("\n" * "="^60)
+println("ПАРАМЕТРИЧЕСКОЕ СКАНИРОВАНИЕ")
+println("Всего комбинаций параметров: ", length(all_params))
+println("Исследуемые model_type: ", param_grid[:model_type])
+println("Исследуемые a: ", param_grid[:a])
+println("Исследуемые k: ", param_grid[:k])
+println("="^60)
+
+# ## Запуск всех экспериментов и сбор результатов
+all_results = []
+all_dfs = []
+
+for (i, params) in enumerate(all_params)
+    println("Прогресс: $i/$(length(all_params)) | model_type=$(params[:model_type]) | a=$(params[:a]) | k=$(params[:k])")
+
+    data, path = produce_or_load(
+        datadir(script_name, "parametric_scan"),
+        params,
+        run_single_experiment;
+        prefix = "scan",
+        tag = false,
+        verbose = false
+    )
+
+    result_summary = merge(
+        params,
+        Dict(
+            :x_final => data["x_final"],
+            :y_final => data["y_final"],
+            :x_max => data["x_max"],
+            :y_max => data["y_max"],
+            :x_min => data["x_min"],
+            :y_min => data["y_min"],
+            :x_mean => data["x_mean"],
+            :y_mean => data["y_mean"],
+            :norm_final => data["norm_final"],
+            :filepath => path
+        )
+    )
+    push!(all_results, result_summary)
+
+    df = DataFrame(
+        t = data["t_points"],
+        x = data["x_values"],
+        y = data["y_values"],
+        model_type = fill(string(params[:model_type]), length(data["t_points"])),
+        a = fill(params[:a], length(data["t_points"])),
+        k = fill(params[:k], length(data["t_points"]))
+    )
+    push!(all_dfs, df)
+end
+
+# ## Анализ результатов сканирования
+results_df = DataFrame(all_results)
+
+println("\nСводная таблица результатов (первые 10 строк):")
+println(first(results_df, 10))
+
+CSV.write(datadir(script_name, "results_summary.csv"), results_df)
+
+# ## Сравнительный график x(t)
+p5 = plot(size = (950, 520), dpi = 150)
+for params in all_params
+    data, _ = produce_or_load(
+        datadir(script_name, "parametric_scan"),
+        params,
+        run_single_experiment;
+        prefix = "scan",
+        tag = false,
+        verbose = false
+    )
+
+    label_text = params[:model_type] == :base ?
+        "base, a=$(params[:a])" :
+        "extended, k=$(params[:k])"
+
+    plot!(
+        p5,
+        data["t_points"], data["x_values"],
+        label = label_text,
+        lw = 2,
+        alpha = 0.8
+    )
+end
+plot!(
+    p5,
+    xlabel = "t",
+    ylabel = "x(t)",
+    title = "Сканирование: траектории x(t) для разных параметров",
+    legend = :outerright,
+    grid = true
+)
+savefig(p5, plotsdir(script_name, "parametric_scan_x_comparison.png"))
+
+# ## Сравнительный график y(t)
+p6 = plot(size = (950, 520), dpi = 150)
+for params in all_params
+    data, _ = produce_or_load(
+        datadir(script_name, "parametric_scan"),
+        params,
+        run_single_experiment;
+        prefix = "scan",
+        tag = false,
+        verbose = false
+    )
+
+    label_text = params[:model_type] == :base ?
+        "base, a=$(params[:a])" :
+        "extended, k=$(params[:k])"
+
+    plot!(
+        p6,
+        data["t_points"], data["y_values"],
+        label = label_text,
+        lw = 2,
+        alpha = 0.8
+    )
+end
+plot!(
+    p6,
+    xlabel = "t",
+    ylabel = "y(t)",
+    title = "Сканирование: траектории y(t) для разных параметров",
+    legend = :outerright,
+    grid = true
+)
+savefig(p6, plotsdir(script_name, "parametric_scan_y_comparison.png"))
+
+# ## Сравнительный фазовый портрет
+p7 = plot(size = (950, 520), dpi = 150)
+for params in all_params
+    data, _ = produce_or_load(
+        datadir(script_name, "parametric_scan"),
+        params,
+        run_single_experiment;
+        prefix = "scan",
+        tag = false,
+        verbose = false
+    )
+
+    label_text = params[:model_type] == :base ?
+        "base, a=$(params[:a])" :
+        "extended, k=$(params[:k])"
+
+    plot!(
+        p7,
+        data["x_values"], data["y_values"],
+        label = label_text,
+        lw = 2,
+        alpha = 0.8
+    )
+end
+plot!(
+    p7,
+    xlabel = "x",
+    ylabel = "y",
+    title = "Сканирование: фазовые траектории",
+    legend = :outerright,
+    grid = true
+)
+savefig(p7, plotsdir(script_name, "parametric_scan_phase_comparison.png"))
+
+# ## График зависимости norm_final от параметров
+p8 = plot(size = (900, 520), dpi = 150)
+
+base_sub = results_df[results_df.model_type .== :base, :]
+extended_sub = results_df[results_df.model_type .== :extended, :]
+
+if nrow(base_sub) > 0
+    plot!(
+        p8,
+        base_sub.a, base_sub.norm_final,
+        seriestype = :scatter,
+        label = "base"
+    )
+end
+
+if nrow(extended_sub) > 0
+    plot!(
+        p8,
+        extended_sub.k, extended_sub.norm_final,
+        seriestype = :scatter,
+        label = "extended"
+    )
+end
+
+plot!(
+    p8,
+    xlabel = "Параметр модели",
+    ylabel = "norm_final",
+    title = "Зависимость norm_final от параметров модели",
+    legend = :topleft,
+    grid = true
+)
+savefig(p8, plotsdir(script_name, "norm_final_vs_parameter.png"))
+
+# ## Бенчмаркинг
+println("\n" * "="^60)
+println("БЕНЧМАРКИНГ ДЛЯ РАЗНЫХ ПАРАМЕТРОВ")
+println("="^60)
+
+benchmark_results = []
+
+for params in all_params
+    function benchmark_run()
+        u0 = [params[:x0], params[:y0]]
+
+        if params[:model_type] == :base
+            p = (a = params[:a], b = params[:b], c = params[:c], d = params[:d])
+            prob = ODEProblem(syst_base!, u0, params[:tspan], p)
+        else
+            p = (a = params[:a], b = params[:b], c = params[:c], d = params[:d], k = params[:k])
+            prob = ODEProblem(syst_extended!, u0, params[:tspan], p)
+        end
+
+        return solve(
+            prob,
+            params[:solver];
+            saveat = LinRange(params[:tspan][1], params[:tspan][2], params[:nt])
+        )
+    end
+
+    println("\nБенчмарк для model_type=$(params[:model_type]), a=$(params[:a]), k=$(params[:k]):")
+    bmark = @benchmark $benchmark_run() samples = 80 evals = 1
+    tsec = median(bmark).time / 1e9
+    println(" Медианное время: ", round(tsec; digits = 6), " сек")
+
+    push!(benchmark_results, (
+        model_type = string(params[:model_type]),
+        a = params[:a],
+        k = params[:k],
+        time = tsec
+    ))
+end
+
+bench_df = DataFrame(benchmark_results)
+CSV.write(datadir(script_name, "benchmark_results.csv"), bench_df)
+
+# ## График времени вычисления
+p9 = plot(size = (900, 520), dpi = 150)
+
+bench_base = bench_df[bench_df.model_type .== "base", :]
+bench_extended = bench_df[bench_df.model_type .== "extended", :]
+
+if nrow(bench_base) > 0
+    plot!(
+        p9,
+        bench_base.a, bench_base.time,
+        seriestype = :scatter,
+        label = "base"
+    )
+end
+
+if nrow(bench_extended) > 0
+    plot!(
+        p9,
+        bench_extended.k, bench_extended.time,
+        seriestype = :scatter,
+        label = "extended"
+    )
+end
+
+plot!(
+    p9,
+    xlabel = "Параметр модели",
+    ylabel = "Время вычисления, сек",
+    title = "Зависимость времени решения ODE от параметров модели",
+    legend = :topleft,
+    grid = true
+)
+savefig(p9, plotsdir(script_name, "computation_time_vs_parameter.png"))
+
+# ## Сохранение всех результатов
+@save datadir(script_name, "all_results.jld2") base_params base_params2 param_grid all_params results_df bench_df
+@save datadir(script_name, "all_plots.jld2") p1 p2 p3 p4 p5 p6 p7 p8 p9
+
+println("\n" * "="^60)
+println("ЛАБОРАТОРНАЯ РАБОТА ЗАВЕРШЕНА")
+println("="^60)
+println("\nРезультаты сохранены в:")
+println(" • data/$(script_name)/single/ - базовые эксперименты")
+println(" • data/$(script_name)/parametric_scan/ - параметрическое сканирование")
+println(" • data/$(script_name)/results_summary.csv - сводная таблица")
+println(" • data/$(script_name)/benchmark_results.csv - результаты бенчмаркинга")
+println(" • data/$(script_name)/all_results.jld2 - сводные данные")
+println(" • plots/$(script_name)/ - все графики")
+println(" • data/$(script_name)/all_plots.jld2 - объекты графиков")

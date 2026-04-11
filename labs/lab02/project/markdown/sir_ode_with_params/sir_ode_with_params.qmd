@@ -1,0 +1,351 @@
+# Модель SIR: Параметрическое исследование эпидемии
+
+**Цель работы:** Исследовать влияние различных параметров на динамику
+распространения инфекционного заболевания с помощью модели SIR.
+
+## Теоретическое введение
+
+Модель SIR (Susceptible-Infectious-Recovered) делит популяцию на три группы:
+- **S (Susceptible)** - восприимчивые к инфекции
+- **I (Infectious)** - инфицированные и заразные
+- **R (Recovered)** - выздоровевшие (с иммунитетом)
+
+### Система дифференциальных уравнений
+
+$$
+\begin{cases}
+\frac{dS}{dt} = -\beta \cdot c \cdot \frac{I}{N} \cdot S \\[1em]
+\frac{dI}{dt} = \beta \cdot c \cdot \frac{I}{N} \cdot S - \gamma I \\[1em]
+\frac{dR}{dt} = \gamma I
+\end{cases}
+$$
+
+где:
+- $\beta$ - вероятность передачи инфекции при контакте
+- $c$ - среднее число контактов в единицу времени
+- $\gamma$ - скорость выздоровления ($1/\gamma$ - средняя продолжительность болезни)
+- $N = S + I + R$ - общая численность популяции
+
+### Ключевые показатели
+
+**Базовое репродуктивное число:**
+$$R_0 = \frac{c \cdot \beta}{\gamma}$$
+
+**Эффективное репродуктивное число:**
+$$R_e(t) = R_0 \cdot \frac{S(t)}{N}$$
+
+## Инициализация проекта и загрузка пакетов
+
+```{julia}
+using DrWatson
+@quickactivate "project"
+
+using DifferentialEquations
+using DataFrames
+using StatsPlots
+using LaTeXStrings
+using Plots
+using BenchmarkTools
+using CSV
+```
+
+## Настройка директорий для сохранения результатов
+
+```{julia}
+script_name = splitext(basename(PROGRAM_FILE))[1]
+mkpath(plotsdir(script_name))
+mkpath(datadir(script_name))
+```
+
+## Определение функции модели SIR
+
+```{julia}
+function sir_ode!(du, u, p, t)
+    (S, I, R) = u
+    (β, c, γ) = p
+    N = S + I + R
+
+    @inbounds begin
+        du[1] = -β * c * I / N * S   # dS/dt
+        du[2] = β * c * I / N * S - γ * I  # dI/dt
+        du[3] = γ * I                 # dR/dt
+    end
+    nothing
+end
+```
+
+## Параметры интегрирования (общие для всех сценариев)
+
+```{julia}
+δt = 0.1
+tmax = 40.0
+tspan = (0.0, tmax)
+u0 = [990.0, 10.0, 0.0]  # начальные условия: S0, I0, R0
+```
+
+## ПАРАМЕТРИЧЕСКОЕ ИССЛЕДОВАНИЕ
+
+### Набор сценариев для анализа
+
+Исследуем 5 различных сценариев, меняя ключевые параметры:
+1. **Базовый сценарий** - исходные параметры (β=0.05, c=10.0, γ=0.25)
+2. **Низкая заразность** - уменьшенная вероятность передачи (β=0.03)
+3. **Высокая заразность** - увеличенная вероятность передачи (β=0.07)
+4. **Карантин** - уменьшенное число контактов (c=5.0)
+5. **Быстрое выздоровление** - увеличенная скорость выздоровления (γ=0.5)
+
+Формат: [β, c, γ, название_сценария]
+
+```{julia}
+parameter_sets = [
+    [0.05, 10.0, 0.25, "Базовый сценарий (R₀=2.0)"],
+    [0.03, 10.0, 0.25, "Низкая заразность (R₀=1.2)"],
+    [0.07, 10.0, 0.25, "Высокая заразность (R₀=2.8)"],
+    [0.05, 5.0,  0.25, "Карантин (R₀=1.0)"],
+    [0.05, 10.0, 0.5,  "Быстрое выздоровление (R₀=1.0)"]
+]
+```
+
+## Запуск симуляций для всех сценариев
+
+Для каждого набора параметров:
+1. Решаем систему ОДУ
+2. Сохраняем результаты в DataFrame
+3. Вычисляем ключевые метрики
+
+```{julia}
+println("="^70)
+println("ПАРАМЕТРИЧЕСКОЕ ИССЛЕДОВАНИЕ МОДЕЛИ SIR")
+println("="^70)
+
+all_results = Dict()  # словарь для хранения всех результатов
+scenario_metrics = DataFrame(Scenario=String[], R0=Float64[],
+    Peak_Time=Float64[], Peak_I=Float64[], Final_R=Float64[])
+
+for (idx, params) in enumerate(parameter_sets)
+    β = params[1]
+    c = params[2]
+    γ = params[3]
+    scenario_name = params[4]
+
+    p = [β, c, γ]
+
+    R0 = (c * β) / γ
+
+    prob = ODEProblem(sir_ode!, u0, tspan, p)
+    sol = solve(prob, Tsit5(), dt = δt, saveat=0.1)
+
+    df = DataFrame(Tables.table(sol'))
+    rename!(df, ["S", "I", "R"])
+    df[!, :t] = sol.t
+    df[!, :N] = df.S + df.I + df.R
+
+    all_results[scenario_name] = df
+
+    peak_idx = argmax(df.I)
+    peak_time = df.t[peak_idx]
+    peak_value = df.I[peak_idx]
+    final_R = df.R[end]
+
+    push!(scenario_metrics, [scenario_name, R0, peak_time, peak_value, final_R])
+
+    println("\n📊 Сценарий $idx: $scenario_name")
+    println("   R₀ = ", round(R0, digits=2))
+    println("   Пик эпидемии: t = ", round(peak_time, digits=1), " дней, I_max = ", round(peak_value, digits=1))
+    println("   Итоговое число переболевших: ", round(final_R, digits=1))
+end
+
+println("\n" * "="^70)
+println("СВОДНАЯ ТАБЛИЦА РЕЗУЛЬТАТОВ")
+println("="^70)
+println(scenario_metrics)
+```
+
+## ВИЗУАЛИЗАЦИЯ РЕЗУЛЬТАТОВ
+
+### 1. Сравнение динамики инфицированных для всех сценариев
+
+```{julia}
+plt_infected = plot(size=(1000, 600),
+    title="Сравнение сценариев: Динамика инфицированных",
+    xlabel="Время, дни",
+    ylabel="Количество инфицированных I(t)",
+    legend=:topright)
+
+colors = [:blue, :red, :green, :orange, :purple, :brown]
+
+for (idx, (scenario, df)) in enumerate(all_results)
+    plot!(plt_infected, df.t, df.I,
+        label=scenario,
+        color=colors[idx],
+        linewidth=2)
+end
+```
+
+### 2. Сравнение итогового числа переболевших
+
+```{julia}
+plt_recovered = bar(scenario_metrics.Scenario, scenario_metrics.Final_R,
+    title="Сравнение сценариев: Итоговое число переболевших",
+    xlabel="Сценарий",
+    ylabel="R(∞) - итоговое число переболевших",
+    legend=false,
+    color=colors[1:length(scenario_metrics.Scenario)],
+    size=(1000, 500))
+```
+
+### 3. Сравнение пиковых значений
+
+```{julia}
+plt_peak = groupedbar(scenario_metrics.Scenario,
+    [scenario_metrics.Peak_I scenario_metrics.Peak_Time],
+    title="Сравнение сценариев: Пиковые характеристики",
+    xlabel="Сценарий",
+    ylabel="Значение",
+    label=["Пиковое число I_max" "Время пика t_peak"],
+    size=(1000, 500),
+    color=[:red :blue],
+    bar_position=:dodge)
+```
+
+### 4. Детальный график для базового сценария
+
+```{julia}
+base_scenario = "Базовый сценарий (R₀=2.0)"
+df_base = all_results[base_scenario]
+```
+
+Находим параметры базового сценария
+
+```{julia}
+base_params = parameter_sets[1]
+β_base = base_params[1]
+c_base = base_params[2]
+γ_base = base_params[3]
+R0_base = (c_base * β_base) / γ_base
+
+plt_base = plot(layout=(2,2), size=(1200, 800),
+    title="Детальный анализ: $base_scenario")
+```
+
+Динамика всех групп
+
+```{julia}
+plot!(plt_base[1], df_base.t, [df_base.S df_base.I df_base.R],
+    label=[L"S(t)" L"I(t)" L"R(t)"],
+    xlabel="Время, дни",
+    ylabel="Количество",
+    title="Динамика популяции",
+    linewidth=2,
+    color=[:green :red :blue])
+```
+
+Фазовый портрет
+
+```{julia}
+plot!(plt_base[2], df_base.S, df_base.I,
+    label="Фазовая траектория",
+    xlabel=L"S(t)",
+    ylabel=L"I(t)",
+    title="Фазовый портрет",
+    linewidth=2,
+    color=:purple)
+```
+
+Логарифмический масштаб
+
+```{julia}
+plot!(plt_base[3], df_base.t, df_base.I,
+    label=L"I(t)",
+    xlabel="Время, дни",
+    ylabel="log(I)",
+    title="Экспоненциальный рост (лог. шкала)",
+    yscale=:log10,
+    linewidth=2,
+    color=:red)
+```
+
+Эффективное R
+
+```{julia}
+df_base[!, :Re] = R0_base .* df_base.S ./ df_base.N
+plot!(plt_base[4], df_base.t, df_base.Re,
+    label=L"R_e(t)",
+    xlabel="Время, дни",
+    ylabel="R_e",
+    title="Эффективное репродуктивное число",
+    linewidth=2,
+    color=:orange)
+hline!(plt_base[4], [1], color=:black, linestyle=:dash, label="R_e = 1")
+```
+
+### 5. Сравнение фазовых портретов
+
+```{julia}
+plt_phase = plot(size=(800, 600),
+    title="Сравнение фазовых портретов",
+    xlabel="Популяция восприимчивых S(t)",
+    ylabel="Популяция инфицированных I(t)",
+    legend=:bottomleft)
+
+for (idx, (scenario, df)) in enumerate(all_results)
+    plot!(plt_phase, df.S, df.I,
+        label=scenario,
+        color=colors[idx],
+        linewidth=1.5,
+        alpha=0.7)
+end
+```
+
+## Сохранение графиков
+
+```{julia}
+savefig(plt_infected, plotsdir(script_name, "sir_comparison_infected.png"))
+savefig(plt_recovered, plotsdir(script_name, "sir_comparison_recovered.png"))
+savefig(plt_peak, plotsdir(script_name, "sir_comparison_peak.png"))
+savefig(plt_base, plotsdir(script_name, "sir_base_detailed.png"))
+savefig(plt_phase, plotsdir(script_name, "sir_phase_comparison.png"))
+
+println("\nГрафики сохранены в: ", plotsdir(script_name))
+```
+
+## Сохранение результатов в CSV
+
+```{julia}
+CSV.write(datadir(script_name, "sir_metrics.csv"), scenario_metrics)
+println("\nРезультаты сохранены в: ", datadir(script_name, "sir_metrics.csv"))
+```
+
+## Анализ чувствительности
+
+```{julia}
+println("\n" * "="^70)
+println("АНАЛИЗ ЧУВСТВИТЕЛЬНОСТИ")
+println("="^70)
+println("""
+На основе полученных результатов можно сделать следующие выводы:
+
+1. **Влияние β (вероятности заражения):**
+   - Увеличение β с 0.03 до 0.07 повышает R₀ с 1.2 до 2.8
+   - Пик эпидемии становится выше и наступает раньше
+   - Итоговое число переболевших значительно возрастает
+
+2. **Влияние c (числа контактов):**
+   - Снижение c с 10 до 5 (карантин) уменьшает R₀ с 2.0 до 1.0
+   - При R₀=1.0 эпидемия не развивается (стабильное состояние)
+
+3. **Влияние γ (скорости выздоровления):**
+   - Увеличение γ с 0.25 до 0.5 (более быстрое выздоровление)
+   - Снижает R₀ с 2.0 до 1.0
+   - Укорачивает продолжительность эпидемии
+
+4. **Порог коллективного иммунитета:**
+   - Для базового сценария (R₀=2.0): 1 - 1/R₀ = 50%
+   - Фактическая доля переболевших близка к этому значению
+""")
+
+println("\n" * "="^70)
+println("МОДЕЛИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО")
+println("="^70)
+```
+

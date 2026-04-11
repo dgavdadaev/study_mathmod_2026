@@ -1,0 +1,37 @@
+project:
+  title: "presentation"
+  output-dir: "_output"
+
+standalone: true
+self-contained: true
+lang: ru-RU
+crossref:
+  lof-title: Список иллюстраций
+  lot-title: Список таблиц
+  lol-title: Листинги
+
+format:
+  beamer:
+    toc: true
+    toc-title: Содержание
+    number-sections: false
+    slide-level: 2  
+    toc-depth: 1
+    aspectratio: 169
+    incremental: false
+    csquotes: true
+    indent: true
+    include-in-header:
+      - file: _resources/tex/beamer.tex
+    babel-lang: russian
+    babel-otherlangs: english
+    
+  revealjs:
+    transition: slide
+    margin: 0.2
+    smaller: true
+    slide-number: true
+    output-ext: html
+    theme: beige
+    logo: _resources/image/logo_rudn.png
+    slide-level: 2 

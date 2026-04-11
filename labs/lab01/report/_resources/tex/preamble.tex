@@ -1,0 +1,38 @@
+
+\usepackage{indentfirst}
+\usepackage{float}
+\floatplacement{figure}{H}
+
+\IfFileExists{plex-otf.sty}{
+  %% Full TeXlive
+  \usepackage[
+     math,
+    RM={Scale=0.94},SS={Scale=0.94},SScon={Scale=0.94},TT={Scale=MatchLowercase,FakeStretch=0.9},
+    DefaultFeatures={Ligatures=Common}
+  ]{plex-otf}
+  
+  % Дополнительная поддержка Unicode символов
+  \usepackage{newunicodechar}
+  \newunicodechar{𝑑}{d}
+  \newunicodechar{𝑢}{u}
+  \newunicodechar{𝛼}{α}
+  \newunicodechar{𝑡}{t}
+  
+  % Явная загрузка JuliaMono
+  \setmonofont{JuliaMono}[
+    Path = /home/glebq/.local/share/fonts/,
+    Extension = .ttf,
+    UprightFont = *-Regular,
+    BoldFont = *-Bold,
+    ItalicFont = *-RegularItalic,
+    BoldItalicFont = *-BoldItalic
+  ]
+}{
+  %% TinyTeX
+  \usepackage{libertine}
+  \usepackage{newunicodechar}
+  \newunicodechar{𝑑}{d}
+  \newunicodechar{𝑢}{u}
+  \newunicodechar{𝛼}{α}
+  \newunicodechar{𝑡}{t}
+}

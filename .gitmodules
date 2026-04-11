@@ -1,0 +1,6 @@
+[submodule "template/report"]
+	path = template/report
+	url = https://gitverse.ru/dharma/academic-laboratory-report-template.git
+[submodule "template/presentation"]
+	path = template/presentation
+	url = https://gitverse.ru/dharma/academic-presentation-markdown-template.git

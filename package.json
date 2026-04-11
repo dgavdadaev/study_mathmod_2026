@@ -1,0 +1,14 @@
+{
+  "name": "simulation-modeling",
+  "version": "1.0.0",
+  "description": "Имитационное моделирование",
+  "main": "index.js",
+  "repository": "ssh://git@gitverse.ru:2222/glebqa/2026-1--study--simulation-modeling.git",
+  "author": "glebq <glebb2005@mail.ru>",
+  "license": "CC-BY-4.0",
+    "config": {
+	"commitizen": {
+	    "path": "cz-customizable"
+	}
+    }
+}
